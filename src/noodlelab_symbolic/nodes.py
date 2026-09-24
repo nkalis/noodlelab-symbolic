@@ -7,8 +7,9 @@ from typing import Annotated, Any, Literal, NamedTuple
 
 import numpy as np
 import sympy as sp
+from numpy.typing import NDArray
 
-from noodlelab import Param, Quantity, node, warning
+from noodlelab import Param, Quantity, RunContext, node, warning
 from noodlelab.core.units import dims_or_none, is_quantity, parse, ureg
 from noodlelab.reports.math import TypstMath
 
@@ -432,6 +433,143 @@ def _check_evaluate_range(
                 _call(parse_expression(text), values)
             except (KeyError, ValueError) as exc:
                 return f"{text}: {str(exc).strip(chr(39))}"
+    return None
+
+
+# --- iteration ---------------------------------------------------------------------------------
+#
+# A graph runs each node once, from inputs to outputs, and a link that would
+# close a loop is refused ("the graph contains a cycle"). A loop is therefore
+# the inside of a node: Iterate below is a while loop, and its history makes
+# every pass visible.
+
+
+class Iteration(NamedTuple):
+    result: Quantity
+    iterations: int
+    converged: bool
+    step: NDArray[np.float64]
+    history: NDArray[np.float64]
+    change: NDArray[np.float64]
+
+
+IterateMethod = Literal["fixed point", "newton"]
+
+
+def _step_expression(expression: sp.Basic, variable: str, method: str) -> sp.Basic:
+    """The expression each pass evaluates to get the next x."""
+    x = next((s for s in expression.free_symbols if s.name == variable), sp.Symbol(variable))
+    if method == "newton":
+        f = expression.lhs - expression.rhs if isinstance(expression, Equation) else expression
+        return x - f / sp.diff(f, x)
+    if isinstance(expression, Equation):
+        if expression.lhs != x:
+            raise ValueError(f"For a fixed point, write the equation as {variable} = g({variable})")
+        return expression.rhs
+    return expression
+
+
+def _plain(value: Any) -> float:
+    """A number without its unit (dimensionless ratios are reduced first)."""
+    if is_quantity(value):
+        value = value.to_reduced_units().magnitude
+    return float(np.real_if_close(value))
+
+
+@node(category="Symbolic", title="Iterate")
+def iterate(
+    expression: Expression | Equation,
+    ctx: RunContext,
+    values: SymbolValues | None = None,
+    variable: Variable = "x",
+    method: IterateMethod = "fixed point",
+    start: Annotated[
+        str, Param(description="The first guess, an expression in the values: 0.02, L/2")
+    ] = "1",
+    digits: Annotated[
+        int,
+        Param(
+            widget="number",
+            min=1,
+            max=15,
+            description="Stop when a pass changes x by less than 10^-digits of x",
+        ),
+    ] = 10,
+    max_iterations: Annotated[int, Param(widget="number", min=1, max=100_000)] = 100,
+    unit: Annotated[str, Param(description="Unit of the result; empty: worked out")] = "",
+) -> Iteration:
+    """Repeat a step until the answer stops changing: a while loop in one node.
+
+    * **fixed point**: x ← g(x), where the expression is g(x), or the
+      equation is written x = g(x).
+    * **newton**: solves expression = 0 (or lhs = rhs) with
+      x ← x − f(x)/f′(x). The derivative is worked out symbolically.
+
+    Stops when a pass changes x by at most 10^-``digits``·|x|, so x is good
+    to about that many significant digits, or after ``max_iterations`` passes
+    (``converged`` is then false). ``history`` is x
+    after each pass and ``change`` its relative change, for a convergence plot.
+    """
+    tolerance = 10.0**-digits
+    vals = dict(values or {})
+    step_expr = _step_expression(expression, variable, method)
+    x = _call(parse_expression(start), vals)
+    x = x if is_quantity(x) else float(x)  # floats, not exact integers that grow without bound
+    history: list[float] = []
+    changes: list[float] = []
+    converged = False
+    with np.errstate(all="ignore"):
+        for n in range(1, max_iterations + 1):
+            try:
+                new = _call(step_expr, {**vals, variable: x})
+                change = abs(_plain((new - x) / new)) if _plain(new) != 0 else abs(_plain(new - x))
+            except (OverflowError, ZeroDivisionError):
+                new, change = float("inf"), float("inf")
+            if not np.isfinite(_plain(new)) or not np.isfinite(change):
+                raise ValueError(
+                    f"Pass {n} gave {variable} = {_plain(new):g}: the iteration diverged. "
+                    "Try another start or method"
+                )
+            history.append(_plain(new))
+            changes.append(change)
+            x = new
+            if change <= tolerance:
+                converged = True
+                break
+    n = len(history)
+    ctx.log(
+        f"{method}: converged in {n} passes, {variable} = {_plain(x):.10g}"
+        if converged
+        else f"{method}: not converged after {n} passes (last change {changes[-1]:.2g})"
+    )
+    return Iteration(
+        result=_in_unit(x, unit),
+        iterations=n,
+        converged=converged,
+        step=np.arange(1, n + 1, dtype=np.float64),
+        history=np.asarray(history, dtype=np.float64),
+        change=np.asarray(changes, dtype=np.float64),
+    )
+
+
+@iterate.check
+def _check_iterate(
+    expression: Expression | Equation | None = None,
+    variable: str = "x",
+    method: str = "fixed point",
+    start: str = "1",
+    unit: str = "",
+) -> str | None:
+    if problem := _unit_problem(unit) or _problem(parse_expression, start):
+        return problem
+    if expression is None:
+        return None
+    if variable not in symbols_of(expression):
+        return f"The expression has no symbol '{variable}' to iterate on"
+    try:
+        _step_expression(expression, variable, method)
+    except ValueError as exc:
+        return str(exc)
     return None
 
 
