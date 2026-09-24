@@ -1,6 +1,6 @@
 """The symbolic pack's types: expressions, equations and symbol values.
 
-Each gets a socket colour, a preview (the expression pretty-printed), meta
+Each gets a socket colour, a preview (the expression typeset), meta
 for the editor's dropdowns (the symbols in an expression, the names in a set
 of values) and a checkpoint codec that needs no pickle.
 """
@@ -18,6 +18,9 @@ from sympy.core.relational import Equality
 
 from noodlelab import Preview, register_codec, register_meta, register_preview, register_type
 from noodlelab.core.units import is_quantity, ureg
+from noodlelab.reports.math import math_preview
+
+from .typst import typst_math
 
 Expression = sp.Expr
 Equation = Equality
@@ -67,12 +70,17 @@ def _clip(text: str, limit: int) -> str:
 
 @register_preview("sympy.core.basic.Basic")
 def _preview_basic(value: sp.Basic, ctx: Any) -> Preview:
+    """Typeset with Typst, as the report would show it, with the pretty-printed
+    and plain forms as text; only the text when it cannot be typeset."""
     pretty = sp.pretty(value, use_unicode=True, wrap_line=True, num_columns=100)
-    return Preview(
-        kind="text",
-        summary=_clip(sp.sstr(value), 60),
-        text=_clip(f"{pretty}\n\n{sp.sstr(value)}", 4000),
-    )
+    summary = _clip(sp.sstr(value), 60)
+    text = _clip(f"{pretty}\n\n{sp.sstr(value)}", 4000)
+    try:
+        math = typst_math(value)
+    except Exception:
+        return Preview(kind="text", summary=summary, text=text)
+    preview = math_preview(math, summary=summary, text=text)
+    return preview if preview.kind == "math" else Preview(kind="text", summary=summary, text=text)
 
 
 @register_meta("sympy.core.basic.Basic")

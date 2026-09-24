@@ -10,6 +10,7 @@ import sympy as sp
 
 from noodlelab import Param, Quantity, node, warning
 from noodlelab.core.units import dims_or_none, is_quantity, parse, ureg
+from noodlelab.reports.math import TypstMath
 
 from .parse import ParseError, parse_equation, parse_expression, split_assignments
 from .types import Equation, Expression, SymbolValues, functions_of, symbols_of
@@ -447,7 +448,7 @@ def to_math(
     math = typst_math(expression)
     if left.strip():
         math = f"{typst_math(parse_expression(left))} = {math}"
-    return math
+    return TypstMath(math)  # a str, previewed typeset
 
 
 @to_math.check
