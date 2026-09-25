@@ -3,9 +3,12 @@ with units."""
 
 from __future__ import annotations
 
+import keyword
+from functools import lru_cache
 from typing import Annotated, Any, Literal, NamedTuple
 
 import numpy as np
+import pint
 import sympy as sp
 from numpy.typing import NDArray
 
@@ -13,7 +16,7 @@ from noodlelab import Param, Quantity, RunContext, node, warning
 from noodlelab.core.units import dims_or_none, is_quantity, parse, ureg
 from noodlelab.reports.math import TypstMath
 
-from .parse import ParseError, parse_equation, parse_expression, split_assignments
+from .parse import _RENAMED, ParseError, parse_equation, parse_expression, split_assignments
 from .types import Equation, Expression, SymbolValues, functions_of, symbols_of
 from .typst import typst_math
 
@@ -24,10 +27,6 @@ EXPRESSION_HELP = (
 Text = Annotated[str, Param(multiline=True, description=EXPRESSION_HELP)]
 Variable = Annotated[str, Param(options_from="expression.symbols")]
 Linked = Expression | None
-
-
-def _linked(**kw: Any) -> dict[str, Any]:
-    return {k: v for k, v in kw.items() if v is not None}
 
 
 def _problem(fn: Any, *args: Any, **kwargs: Any) -> str | None:
@@ -67,7 +66,7 @@ def expression(
     """A symbolic expression typed as text. Names that are not functions
     become symbols; ``{a}`` … ``{d}`` insert the linked expressions, so
     ``-E*I*diff({a}, x, 2)`` differentiates whatever is linked to a."""
-    result = parse_expression(text, _linked(a=a, b=b, c=c, d=d))
+    result = parse_expression(text, {"a": a, "b": b, "c": c, "d": d})
     if isinstance(result, sp.Rel):
         raise ParseError("This is an equation: use the Equation node")
     return result
@@ -90,14 +89,14 @@ def equation(
 ) -> Equation:
     """An equation, ``lhs = rhs``, for Solve and Solve ODE. Primes are
     derivatives: ``y''(x)`` is d²y/dx². Without ``=``, the expression equals zero."""
-    return parse_equation(text, _linked(a=a, b=b, c=c, d=d))
+    return parse_equation(text, {"a": a, "b": b, "c": c, "d": d})
 
 
 @equation.check
 def _check_equation(
     text: str = "", a: Any = None, b: Any = None, c: Any = None, d: Any = None
 ) -> str | None:
-    return _problem(parse_equation, text, _linked(a=a, b=b, c=c, d=d))
+    return _problem(equation, text, a, b, c, d)
 
 
 SimplifyMethod = Literal["simplify", "factor", "expand", "cancel", "together", "trigsimp"]
@@ -271,6 +270,7 @@ def values(
         except ValueError:
             try:
                 out[name] = parse(value)
+            # Pint's parser raises anything from AssertionError to TokenError on bad text
             except Exception as exc:
                 raise ParseError(f"{name}: cannot read '{value}' ({exc})") from None
     return out
@@ -281,7 +281,7 @@ def _check_values(text: str = "") -> str | None:
     return _problem(values, text)
 
 
-@node(category="Symbolic", title="Set Value", fold=True)
+@node(category="Symbolic", title="Set Value", fold=True, vectorized=True)
 def set_value(
     values: SymbolValues | None = None,
     name: str = "x",
@@ -290,13 +290,19 @@ def set_value(
     """Add a linked value (a quantity or a number from elsewhere in the graph)
     to a set of values, under ``name``."""
     out = SymbolValues(values or {})
-    out[name.strip()] = value
+    out[_symbol_name(name)] = value
     return out
+
+
+def _symbol_name(name: str) -> str:
+    """``name`` as the parser spells the symbol (``lambda`` is ``lamda``)."""
+    return _RENAMED.get(name.strip(), name.strip())
 
 
 @set_value.check
 def _check_set_value(name: str = "x") -> str | None:
-    if not name.strip().isidentifier() or name.strip().startswith("_"):
+    key = _symbol_name(name)
+    if not key.isidentifier() or key.startswith("_") or keyword.iskeyword(key):
         return f"'{name}' is not a valid symbol name"
     return None
 
@@ -318,9 +324,17 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
     missing = [s for s in symbols_of(expr) if s not in vals]
     if missing:
         raise KeyError(f"No value for {', '.join(missing)}")
+    names, fn = _compiled(expr)
+    return fn(*(vals[s] for s in names))
+
+
+# lambdify writes and compiles Python source: ~1 ms, far more than the call (Iterate
+# calls it once per pass, Monte Carlo once per trial). SymPy compares expressions
+# structurally, so x + 1 and x + 1.0 are different keys.
+@lru_cache(maxsize=256)
+def _compiled(expr: sp.Basic) -> tuple[tuple[str, ...], Any]:
     syms = sorted(expr.free_symbols, key=lambda s: s.name)
-    fn = sp.lambdify(syms, expr, modules="numpy")
-    return fn(*(vals[s.name] for s in syms))
+    return tuple(s.name for s in syms), sp.lambdify(syms, expr, modules="numpy")
 
 
 def _in_unit(result: Any, unit: str) -> Any:
@@ -332,7 +346,7 @@ def _in_unit(result: Any, unit: str) -> Any:
     return result.to_reduced_units()
 
 
-@node(category="Symbolic", title="Evaluate")
+@node(category="Symbolic", title="Evaluate", vectorized=True)
 def evaluate(
     expression: Expression,
     values: SymbolValues,
@@ -356,10 +370,11 @@ def _check_evaluate(
         result = _in_unit(_call(expression, values), unit)
     except (KeyError, ValueError) as exc:
         return str(exc).strip("'\"")
-    except Exception as exc:  # Pint's DimensionalityError and friends: shown while editing
-        return (
-            str(exc) if "Dimensionality" in type(exc).__name__ else f"{type(exc).__name__}: {exc}"
-        )
+    except pint.DimensionalityError as exc:
+        return str(exc)
+    # whatever the run would raise (1/x at x = 0 with plain numbers...), shown while editing
+    except Exception as exc:
+        return f"{type(exc).__name__}: {exc}"
     if not unit.strip() and not result.dimensionless:
         return warning(f"The result is in {result.units:~P}: set a unit to be sure")
     return None

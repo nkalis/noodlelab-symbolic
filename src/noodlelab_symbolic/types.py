@@ -8,6 +8,7 @@ of values) and a checkpoint codec that needs no pickle.
 from __future__ import annotations
 
 import ast
+import functools
 import io
 import json
 from typing import IO, Any
@@ -17,16 +18,13 @@ import sympy as sp
 from sympy.core.relational import Equality
 
 from noodlelab import Preview, register_codec, register_meta, register_preview, register_type
-from noodlelab.core.units import is_quantity, ureg
+from noodlelab.core.units import is_quantity, magnitude, ureg
 from noodlelab.reports.math import math_preview
 
 from .typst import typst_math
 
 Expression = sp.Expr
 Equation = Equality
-
-EXPR = "sympy.core.expr.Expr"
-EQUATION = "sympy.core.relational.Equality"
 
 
 class SymbolValues(dict):
@@ -77,7 +75,7 @@ def _preview_basic(value: sp.Basic, ctx: Any) -> Preview:
     text = _clip(f"{pretty}\n\n{sp.sstr(value)}", 4000)
     try:
         math = typst_math(value)
-    except Exception:
+    except Exception:  # a preview is best effort: fall back to the text forms
         return Preview(kind="text", summary=summary, text=text)
     preview = math_preview(math, summary=summary, text=text)
     return preview if preview.kind == "math" else Preview(kind="text", summary=summary, text=text)
@@ -104,6 +102,7 @@ def _meta_values(value: SymbolValues) -> dict[str, Any]:
 # --- checkpoints: srepr, read back without eval ---------------------------------------------
 
 
+@functools.cache
 def _sympy_names() -> dict[str, Any]:
     """The names srepr() writes: SymPy classes and singletons (pi, oo...)."""
     names = {}
@@ -122,16 +121,10 @@ def _sympy_names() -> dict[str, Any]:
     return names
 
 
-_NAMES: dict[str, Any] | None = None
-
-
 def from_srepr(text: str) -> sp.Basic:
     """The inverse of ``sympy.srepr``, reading only calls of SymPy classes with
     literal arguments: loading a checkpoint cannot run code."""
-    global _NAMES
-    if _NAMES is None:
-        _NAMES = _sympy_names()
-    names = _NAMES
+    names = _sympy_names()
 
     def ev(node: ast.AST) -> Any:
         if isinstance(node, ast.Constant) and isinstance(node.value, str | int | float | bool):
@@ -177,7 +170,7 @@ def _save_values(value: SymbolValues, fh: IO[bytes]) -> dict[str, Any]:
     arrays: dict[str, Any] = {}
     info: dict[str, Any] = {}
     for i, (name, v) in enumerate(value.items()):
-        m = v.magnitude if is_quantity(v) else v
+        m = magnitude(v)
         if isinstance(m, bool) or not isinstance(m, int | float | np.ndarray | np.generic):
             raise TypeError(f"{name}: a {type(m).__name__} has no safe format")
         arrays[f"v{i}"] = np.asarray(m)

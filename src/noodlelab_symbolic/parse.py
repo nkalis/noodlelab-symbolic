@@ -103,9 +103,9 @@ _MACHINERY = {
     "Function": sp.Function,
 }
 _TRANSFORMS = (*standard_transformations, convert_xor)
-_OPERATORS = frozenset(
-    ["+", "-", "*", "/", "**", "^", "(", ")", ",", "<", ">", "<=", ">=", "==", "!="]
-)
+_OPERATORS = frozenset(["+", "-", "*", "/", "**", "^", "(", ")", ",", "<", ">", "<=", ">="])
+# Python's == and != compare SymPy objects structurally: x == 1 would read as False
+_COMPARISONS = frozenset(["==", "!="])
 _RENAMED = {"lambda": "lamda"}  # a keyword in Python; SymPy prints lamda as λ
 _PLACEHOLDER = re.compile(r"\{([a-d])\}")
 _PRIMES = re.compile(r"\b([A-Za-z]\w*)('+)\(([^()]*)\)")
@@ -163,6 +163,8 @@ def _check_tokens(text: str, allowed_private: frozenset[str]) -> str:
             if keyword.iskeyword(s):
                 raise ParseError(f"'{s}' is a reserved word; choose another symbol name")
         elif kind == tokenize.OP:
+            if s in _COMPARISONS:
+                raise ParseError(f"'{s}' is not allowed: write an equation as lhs = rhs")
             if s not in _OPERATORS:
                 raise ParseError(f"'{s}' is not allowed in an expression")
         else:
@@ -216,8 +218,8 @@ def parse_expression(
         result = parse_expr(
             code, local_dict=local, global_dict=namespace, transformations=_TRANSFORMS
         )
-    except ParseError:
-        raise
+    # the text has only been vetted token by token: SymPy may still raise anything
+    # (TypeError for sin(1, 2), ValueError, RecursionError...), all shown on the node
     except Exception as exc:
         raise ParseError(f"Cannot read '{text.strip()}': {exc}") from None
     if isinstance(result, bool | int | float):
