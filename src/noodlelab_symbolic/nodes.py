@@ -281,7 +281,7 @@ def _check_values(text: str = "") -> str | None:
     return _problem(values, text)
 
 
-@node(category="Symbolic", title="Set Value", fold=True)
+@node(category="Symbolic", title="Set Value", fold=True, vectorized=True)
 def set_value(
     values: SymbolValues | None = None,
     name: str = "x",
@@ -346,7 +346,7 @@ def _in_unit(result: Any, unit: str) -> Any:
     return result.to_reduced_units()
 
 
-@node(category="Symbolic", title="Evaluate")
+@node(category="Symbolic", title="Evaluate", vectorized=True)
 def evaluate(
     expression: Expression,
     values: SymbolValues,
