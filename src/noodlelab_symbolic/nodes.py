@@ -4,6 +4,7 @@ with units."""
 from __future__ import annotations
 
 import keyword
+from functools import lru_cache
 from typing import Annotated, Any, Literal, NamedTuple
 
 import numpy as np
@@ -323,9 +324,17 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
     missing = [s for s in symbols_of(expr) if s not in vals]
     if missing:
         raise KeyError(f"No value for {', '.join(missing)}")
+    names, fn = _compiled(expr)
+    return fn(*(vals[s] for s in names))
+
+
+# lambdify writes and compiles Python source: ~1 ms, far more than the call (Iterate
+# calls it once per pass, Monte Carlo once per trial). SymPy compares expressions
+# structurally, so x + 1 and x + 1.0 are different keys.
+@lru_cache(maxsize=256)
+def _compiled(expr: sp.Basic) -> tuple[tuple[str, ...], Any]:
     syms = sorted(expr.free_symbols, key=lambda s: s.name)
-    fn = sp.lambdify(syms, expr, modules="numpy")
-    return fn(*(vals[s.name] for s in syms))
+    return tuple(s.name for s in syms), sp.lambdify(syms, expr, modules="numpy")
 
 
 def _in_unit(result: Any, unit: str) -> Any:
