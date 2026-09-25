@@ -264,7 +264,7 @@ class _Printer:
         return f"{out}{self.group(expr.function)} {dvars}"
 
     def _print_Relational(self, expr: Relational) -> str:
-        op = {"==": "=", "!=": "!=", "<": "<", "<=": "<=", ">": ">", ">=": ">="}[expr.rel_op]
+        op = "=" if expr.rel_op == "==" else expr.rel_op
         return f"{self.p(expr.lhs)} {op} {self.p(expr.rhs)}"
 
     def _print_Piecewise(self, expr: sp.Piecewise) -> str:
