@@ -18,7 +18,7 @@ import sympy as sp
 from sympy.core.relational import Equality
 
 from noodlelab import Preview, register_codec, register_meta, register_preview, register_type
-from noodlelab.core.units import is_quantity, ureg
+from noodlelab.core.units import is_quantity, magnitude, ureg
 from noodlelab.reports.math import math_preview
 
 from .typst import typst_math
@@ -170,7 +170,7 @@ def _save_values(value: SymbolValues, fh: IO[bytes]) -> dict[str, Any]:
     arrays: dict[str, Any] = {}
     info: dict[str, Any] = {}
     for i, (name, v) in enumerate(value.items()):
-        m = v.magnitude if is_quantity(v) else v
+        m = magnitude(v)
         if isinstance(m, bool) or not isinstance(m, int | float | np.ndarray | np.generic):
             raise TypeError(f"{name}: a {type(m).__name__} has no safe format")
         arrays[f"v{i}"] = np.asarray(m)
