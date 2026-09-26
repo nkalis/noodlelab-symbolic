@@ -75,6 +75,7 @@ FUNCTIONS: dict[str, Any] = {
             "conjugate",
             "factorial",
             "erf",
+            "erfc",
             "Heaviside",
             "DiracDelta",
             "SingularityFunction",

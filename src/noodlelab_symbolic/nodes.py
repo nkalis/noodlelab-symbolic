@@ -4,6 +4,7 @@ with units."""
 from __future__ import annotations
 
 import keyword
+import math
 from functools import lru_cache
 from typing import Annotated, Any, Literal, NamedTuple
 
@@ -334,7 +335,25 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
 @lru_cache(maxsize=256)
 def _compiled(expr: sp.Basic) -> tuple[tuple[str, ...], Any]:
     syms = sorted(expr.free_symbols, key=lambda s: s.name)
-    return tuple(s.name for s in syms), sp.lambdify(syms, expr, modules="numpy")
+    return tuple(s.name for s in syms), sp.lambdify(syms, expr, modules=[_ELEMENTWISE, "numpy"])
+
+
+def _elementwise(fn: Any) -> Any:
+    """A function of one number (from :mod:`math`) that also takes arrays and
+    dimensionless quantities, as NumPy's own functions do."""
+    each = np.vectorize(fn, otypes=[np.float64])
+
+    def call(x: Any) -> Any:
+        if is_quantity(x):
+            x = x.m_as("")  # a unit that does not cancel is an error here
+        out = each(x)
+        return float(out) if np.ndim(out) == 0 else out
+
+    return call
+
+
+# functions NumPy lacks: lambdify would call math's, which take one number only
+_ELEMENTWISE = {"erf": _elementwise(math.erf), "erfc": _elementwise(math.erfc)}
 
 
 def _in_unit(result: Any, unit: str) -> Any:
