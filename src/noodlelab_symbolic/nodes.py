@@ -14,6 +14,7 @@ import sympy as sp
 from numpy.typing import NDArray
 
 from noodlelab import Param, Quantity, RunContext, node, warning
+from noodlelab.core import uncertainty
 from noodlelab.core.units import dims_or_none, is_quantity, parse, ureg
 from noodlelab.reports.math import TypstMath
 
@@ -326,7 +327,12 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
     if missing:
         raise KeyError(f"No value for {', '.join(missing)}")
     names, fn = _compiled(expr)
-    return fn(*(vals[s] for s in names))
+    args = {s: vals[s] for s in names}
+    if any(uncertainty.is_uncertain(v) for v in args.values()):
+        # NumPy's functions cannot take uncertain numbers: propagate their uncertainty
+        # the way every node does (GUM, first order), which keeps correlations too
+        return uncertainty.lift(lambda **kw: fn(*(kw[s] for s in names)), args, set(args))
+    return fn(*args.values())
 
 
 # lambdify writes and compiles Python source: ~1 ms, far more than the call (Iterate
