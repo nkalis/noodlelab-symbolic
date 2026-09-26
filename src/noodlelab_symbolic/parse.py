@@ -20,6 +20,7 @@ The notation is SymPy's, with a few conveniences for engineers:
 
 from __future__ import annotations
 
+import ast
 import io
 import keyword
 import re
@@ -28,6 +29,8 @@ from typing import Any
 
 import sympy as sp
 from sympy.parsing.sympy_parser import convert_xor, parse_expr, standard_transformations
+
+from .._expr import pow_problem
 
 MAX_LENGTH = 4000
 
@@ -176,6 +179,26 @@ def _check_tokens(text: str, allowed_private: frozenset[str]) -> str:
     return tokenize.untokenize(out).strip()
 
 
+def _check_size(code: str) -> None:
+    """ParseError when an integer power or factorial is too large to compute.
+
+    SymPy evaluates ``9^9^9`` exactly, which would hold the server for hours
+    (and the probe, on every keystroke). The vetted token stream is plain
+    Python arithmetic once ``^`` is ``**``, so its tree can be sized by
+    :func:`noodlelab.nodes._expr.pow_problem` before SymPy sees it. Text that
+    Python cannot parse but SymPy can is left for SymPy, as before. Values
+    linked in later (Substitute's ``.subs``) are not seen here and can still
+    build a large power; the editor's probe timeout covers that.
+    """
+    try:
+        tree = ast.parse(code.replace("^", "**"), mode="eval")
+    except SyntaxError:
+        return
+    found = pow_problem(tree)
+    if found:
+        raise ParseError(found)
+
+
 def _juxtaposed(prev: tuple[int, str], tok: tuple[int, str]) -> bool:
     """Two tokens side by side that Python cannot read, but mean a product.
     A name followed by ``(`` stays a function call."""
@@ -213,6 +236,7 @@ def parse_expression(
     code = _check_tokens(text, frozenset(local))
     if not code:
         raise ParseError("Enter an expression, such as w*L^2/12")
+    _check_size(code)
     # E and I are symbols here, so they are not in the namespace at all
     namespace: dict[str, Any] = {"__builtins__": {}, **_MACHINERY, **FUNCTIONS}
     try:
