@@ -1,5 +1,5 @@
-"""Symbolic maths with SymPy. Requires the ``symbolic`` extra (included in
-``science``): ``pip install "noodlelab[symbolic]"``.
+"""Symbolic maths with SymPy. Part of the ``maths`` tier:
+``pip install "noodlelab[maths]"``.
 
 Expressions and equations are typed as text and become SymPy objects that
 flow between nodes: differentiate, integrate, substitute, simplify, solve
@@ -15,15 +15,9 @@ in numbers with Pint units, so a formula checks its own dimensions, and
 
 from __future__ import annotations
 
-try:
-    import numpy  # noqa: F401
-    import pint  # noqa: F401
-    import sympy  # noqa: F401
-except ImportError as exc:  # shown in the editor's pack errors
-    raise ImportError(
-        f"{exc.name} is not installed. Install the symbolic extra: "
-        'uv pip install "noodlelab[symbolic]"'
-    ) from exc
+from noodlelab.tiers import require
+
+require("maths", "numpy", "pint", "sympy")
 
 from .nodes import *  # noqa: F403
 from .types import SymbolValues  # noqa: F401
