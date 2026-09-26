@@ -535,7 +535,7 @@ def iterate(
             description="Stop when a pass changes x by less than 10^-digits of x",
         ),
     ] = 10,
-    max_iterations: Annotated[int, Param(widget="number", min=1, max=100_000)] = 100,
+    max_iterations: Annotated[int, Param(min=1, max=100_000)] = 100,
     unit: Annotated[str, Param(description="Unit of the result; empty: worked out")] = "",
 ) -> Iteration:
     """Repeat a step until the answer stops changing: a while loop in one node.
