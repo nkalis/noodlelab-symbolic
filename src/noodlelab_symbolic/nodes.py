@@ -470,6 +470,11 @@ def _value(name: str, value: str) -> Any:
     if value.isidentifier() and (const := constants.get(value)) is not None:
         return const.value_of()
     try:
+        if uncertainty.is_uncertain_text(value):
+            # Pint's own reader gets "9.81(2)" wrong (± 0.2) and refuses "±"; ours
+            # also names the value after its line, for uncertainty budgets
+            x = uncertainty.parse(value, name=name)
+            return x if is_quantity(x) else ureg().Quantity(x, "")
         return parse(value)
     # Pint's parser raises anything from AssertionError to TokenError on bad text
     except Exception as exc:
@@ -557,6 +562,8 @@ def _unit_problem(unit: str) -> str | None:
 def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
     """``expr`` with ``vals`` put in, computed with NumPy: quantities keep
     their units, and Pint refuses to add metres to seconds."""
+    if expr.has(sp.Sum, sp.Product):
+        expr = _expand_sums(expr, vals)
     if functions := functions_of(expr):
         raise ValueError(
             f"The expression still has the unknown function(s) {', '.join(functions)}: "
@@ -572,6 +579,26 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
         # the way every node does (GUM, first order), which keeps correlations too
         return uncertainty.lift(lambda **kw: fn(*(kw[s] for s in names)), args, set(args))
     return fn(*args.values())
+
+
+def _expand_sums(expr: sp.Basic, vals: dict[str, Any]) -> sp.Basic:
+    """Sums and products written out term by term. NumPy has nothing for a sum
+    over a symbolic index, and SymPy's closed forms (``harmonic``...) have no
+    NumPy function either, so the limits get their values first."""
+    loops = expr.atoms(sp.Sum, sp.Product)
+    bounds = {
+        s for loop in loops for _, lo, hi in loop.limits for s in lo.free_symbols | hi.free_symbols
+    }
+    subs = {}
+    for sym in bounds:
+        if sym.name not in vals:
+            continue  # the "No value for ..." below says so
+        v = vals[sym.name]
+        v = v.m_as("") if is_quantity(v) else v
+        if not float(v).is_integer():
+            raise ValueError(f"{sym.name} = {v} is a limit of a sum or product: it must be whole")
+        subs[sym] = int(v)
+    return expr.subs(subs).doit()
 
 
 # lambdify writes and compiles Python source: ~1 ms, far more than the call (Iterate
@@ -621,10 +648,31 @@ def evaluate(
     in kN·m. An array value (a quantity holding many numbers) gives an array."""
     if isinstance(expression, sp.MatrixBase):
         raise TypeError(MATRIX_TO_EVALUATE)
-    return _in_unit(_call(expression, values), unit)
+    try:
+        return _in_unit(_call(expression, values), unit)
+    except pint.OffsetUnitCalculusError:
+        raise TypeError(_offset_problem(values)) from None
 
 
 MATRIX_TO_EVALUATE = "This is a matrix: use Evaluate Matrix"
+
+
+def _offset_problem(values: dict[str, Any]) -> str:
+    """Pint's "ambiguous operation with offset unit" names units, not the
+    value to fix. °C and °F are offset scales: 2 × 20 °C is not 40 °C, so a
+    formula needs kelvin, or a temperature difference."""
+    offset = [
+        f"{name} ({v:~P})"
+        for name, v in values.items()
+        if is_quantity(v) and not getattr(v, "_is_multiplicative", True)
+    ]
+    which = ", ".join(offset) or "a value"
+    verb = "are temperatures" if len(offset) > 1 else "is a temperature"
+    return (
+        f"{which} {verb} on an offset scale, which a formula cannot use (SymPy writes "
+        "even a - b as a + (-1)·b): convert to K first (Convert Units), or give a "
+        "temperature difference in delta_degC"
+    )
 
 
 @evaluate.check
@@ -641,6 +689,8 @@ def _check_evaluate(
         result = _in_unit(_call(expression, values), unit)
     except (KeyError, ValueError) as exc:
         return str(exc).strip("'\"")
+    except pint.OffsetUnitCalculusError:
+        return _offset_problem(values)
     except pint.DimensionalityError as exc:
         return str(exc)
     # whatever the run would raise (1/x at x = 0 with plain numbers...), shown while editing

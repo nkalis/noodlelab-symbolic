@@ -97,6 +97,10 @@ FUNCTIONS: dict[str, Any] = {
     "Integral": sp.Integral,
     "Subs": sp.Subs,
     "Rational": sp.Rational,
+    # sums and products over an index, done before evaluating: Sum(1/k^2, (k, 1, N))
+    "Sum": sp.Sum,
+    "summation": sp.summation,
+    "Product": sp.Product,
 }
 # what parse_expr's transformations produce: Symbol('x'), Integer(2), Function('y')...
 _MACHINERY = {
