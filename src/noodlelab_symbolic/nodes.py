@@ -471,8 +471,9 @@ def _value(name: str, value: str) -> Any:
         return const.value_of()
     try:
         if uncertainty.is_uncertain_text(value):
-            # Pint's own reader gets "9.81(2)" wrong (± 0.2) and refuses "±"; ours
-            # also names the value after its line, for uncertainty budgets
+            # Pint's own reader gets "9.81(2)" wrong (± 0.2), refuses "±" and makes
+            # its own ufloat, which Monte Carlo cannot draw; ours goes through make()
+            # and names the value after its line, for uncertainty budgets
             x = uncertainty.parse(value, name=name)
             return x if is_quantity(x) else ureg().Quantity(x, "")
         return parse(value)
@@ -574,10 +575,12 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
         raise KeyError(f"No value for {', '.join(missing)}{constants.hint(missing)}")
     names, fn = _compiled(expr)
     args = {s: vals[s] for s in names}
-    if any(uncertainty.is_uncertain(v) for v in args.values()):
+    if any(uncertainty.has_uncertainty(v) for v in args.values()):
         # NumPy's functions cannot take uncertain numbers: propagate their uncertainty
         # the way every node does (GUM, first order), which keeps correlations too
-        return uncertainty.lift(lambda **kw: fn(*(kw[s] for s in names)), args, set(args))
+        return uncertainty.lift(
+            lambda **kw: fn(*(kw[s] for s in names)), args, set(args), elementwise=True
+        )
     return fn(*args.values())
 
 
@@ -760,7 +763,7 @@ def evaluate_range(
     if not is_quantity(y) or np.ndim(y.magnitude) == 0:  # does not depend on the variable
         y = y * np.ones(points)
     y = _in_unit(y, unit)
-    mag = np.asarray(y.magnitude)
+    mag = np.asarray(uncertainty.nominal(y).magnitude)
     # complex values have no order: rank them by size, as the peak already is
     size = np.abs(mag) if np.iscomplexobj(mag) else mag.astype(np.float64)
     i = int(np.nanargmax(np.abs(size)))
