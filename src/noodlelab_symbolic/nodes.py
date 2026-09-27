@@ -469,6 +469,8 @@ def _value(name: str, value: str) -> Any:
         pass
     if value.isidentifier() and (const := constants.get(value)) is not None:
         return const.value_of()
+    if uncertainty.is_uncertain_text(value):  # made by make(): Monte Carlo draws it
+        return uncertainty.parse(value)
     try:
         return parse(value)
     # Pint's parser raises anything from AssertionError to TokenError on bad text
@@ -567,10 +569,12 @@ def _call(expr: sp.Basic, vals: dict[str, Any]) -> Any:
         raise KeyError(f"No value for {', '.join(missing)}{constants.hint(missing)}")
     names, fn = _compiled(expr)
     args = {s: vals[s] for s in names}
-    if any(uncertainty.is_uncertain(v) for v in args.values()):
+    if any(uncertainty.has_uncertainty(v) for v in args.values()):
         # NumPy's functions cannot take uncertain numbers: propagate their uncertainty
         # the way every node does (GUM, first order), which keeps correlations too
-        return uncertainty.lift(lambda **kw: fn(*(kw[s] for s in names)), args, set(args))
+        return uncertainty.lift(
+            lambda **kw: fn(*(kw[s] for s in names)), args, set(args), elementwise=True
+        )
     return fn(*args.values())
 
 
@@ -688,7 +692,7 @@ def evaluate_range(
     if not is_quantity(y) or np.ndim(y.magnitude) == 0:  # does not depend on the variable
         y = y * np.ones(points)
     y = _in_unit(y, unit)
-    mag = np.asarray(y.magnitude, dtype=np.float64)
+    mag = np.asarray(uncertainty.nominal(y).magnitude, dtype=np.float64)
     i = int(np.nanargmax(np.abs(mag)))
     return Sweep(
         x=x,
