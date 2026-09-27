@@ -17,7 +17,14 @@ import numpy as np
 import sympy as sp
 from sympy.core.relational import Equality
 
-from noodlelab import Preview, register_codec, register_meta, register_preview, register_type
+from noodlelab import (
+    Preview,
+    register_codec,
+    register_meta,
+    register_preview,
+    register_sampler,
+    register_type,
+)
 from noodlelab.core.units import is_quantity, magnitude, ureg
 from noodlelab.reports.math import math_preview
 
@@ -25,6 +32,21 @@ from .typst import typst_math
 
 Expression = sp.Expr
 Equation = Equality
+
+
+SymbolicMatrix = sp.ImmutableMatrix  # an Expr too, so matrices reach Simplify, Substitute...
+
+
+class EquationSystem(tuple):
+    """Several equations to be solved together, such as one balance equation
+    per mass: a tuple of SymPy equations."""
+
+    @property
+    def symbols(self) -> list[str]:
+        return sorted({s for e in self for s in symbols_of(e)})
+
+    def __repr__(self) -> str:
+        return "EquationSystem(" + "; ".join(sp.sstr(e) for e in self) + ")"
 
 
 class SymbolValues(dict):
@@ -47,6 +69,8 @@ def _show(value: Any) -> str:
 register_type(sp.Expr, "EXPRESSION", "#c678dd", "A symbolic expression (SymPy)")
 register_type(Equality, "EQUATION", "#a35fc4", "A symbolic equation, lhs = rhs (SymPy)")
 register_type(SymbolValues, "SYMBOL_VALUES", "#d19a66", "Values for symbols, with units")
+register_type(EquationSystem, "EQUATIONS", "#8f4bb8", "Equations solved together (SymPy)")
+register_type(SymbolicMatrix, "SYMBOLIC_MATRIX", "#b07cd8", "A matrix of expressions (SymPy)")
 
 
 def symbols_of(expr: sp.Basic) -> list[str]:
@@ -79,6 +103,28 @@ def _preview_basic(value: sp.Basic, ctx: Any) -> Preview:
         return Preview(kind="text", summary=summary, text=text)
     preview = math_preview(math, summary=summary, text=text)
     return preview if preview.kind == "math" else Preview(kind="text", summary=summary, text=text)
+
+
+@register_preview(EquationSystem)
+def _preview_system(value: EquationSystem, ctx: Any) -> Preview:
+    """Typeset one equation per line, aligned at the = signs."""
+    plain = "\n".join(sp.sstr(e) for e in value)
+    summary = _clip("; ".join(sp.sstr(e) for e in value), 60) or "no equations"
+    text = _clip(plain, 4000)
+    try:
+        math = typst_math(tuple(value))
+    except Exception:  # a preview is best effort: fall back to the text
+        return Preview(kind="text", summary=summary, text=text)
+    preview = math_preview(math, summary=summary, text=text)
+    return preview if preview.kind == "math" else Preview(kind="text", summary=summary, text=text)
+
+
+@register_meta(EquationSystem)
+def _meta_system(value: EquationSystem) -> dict[str, Any]:
+    return {
+        "symbols": value.symbols,
+        "functions": sorted({f for e in value for f in functions_of(e)}),
+    }
 
 
 @register_meta("sympy.core.basic.Basic")
@@ -164,6 +210,27 @@ def _load_sympy(fh: IO[bytes], info: dict[str, Any]) -> sp.Basic:
 register_codec(
     "sympy.core.basic.Basic", "sympy-srepr", save=_save_sympy, load=_load_sympy, suffix=".txt"
 )
+
+
+def _save_system(value: EquationSystem, fh: IO[bytes]) -> None:
+    texts = [sp.srepr(e) for e in value]
+    if tuple(from_srepr(t) for t in texts) != tuple(value):
+        raise TypeError("the equations do not read back exactly")
+    fh.write(json.dumps(texts).encode())
+
+
+def _load_system(fh: IO[bytes], info: dict[str, Any]) -> EquationSystem:
+    return EquationSystem(from_srepr(t) for t in json.loads(fh.read().decode()))
+
+
+register_codec(
+    EquationSystem, "sympy-equations", save=_save_system, load=_load_system, suffix=".json"
+)
+
+
+@register_sampler(EquationSystem)
+def _sample_system(value: EquationSystem, size: int) -> EquationSystem:
+    return value  # every equation counts: a few of them is a different problem
 
 
 def _save_values(value: SymbolValues, fh: IO[bytes]) -> dict[str, Any]:

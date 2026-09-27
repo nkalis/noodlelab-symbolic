@@ -263,9 +263,21 @@ class _Printer:
         dvars = " ".join(f"upright(d) {self.p(lim[0])}" for lim in expr.limits)
         return f"{out}{self.group(expr.function)} {dvars}"
 
-    def _print_Relational(self, expr: Relational) -> str:
+    def _print_Relational(self, expr: Relational, align: str = "") -> str:
         op = "=" if expr.rel_op == "==" else expr.rel_op
-        return f"{self.p(expr.lhs)} {op} {self.p(expr.rhs)}"
+        return f"{self.p(expr.lhs)} {align}{op} {self.p(expr.rhs)}"
+
+    def _print_MatrixBase(self, expr: Any) -> str:
+        rows = "; ".join(", ".join(self.p(e) for e in row) for row in expr.tolist())
+        return f'mat(delim: "[", {rows})'
+
+    def system(self, equations: Any) -> str:
+        """Several equations, one per line, aligned at their ``=`` signs."""
+        lines = [
+            self._print_Relational(e, "&") if isinstance(e, Relational) else self.p(e)
+            for e in equations
+        ]
+        return " \\ ".join(lines)
 
     def _print_Piecewise(self, expr: sp.Piecewise) -> str:
         rows = []
@@ -276,5 +288,8 @@ class _Printer:
 
 
 def typst_math(expr: Any) -> str:
-    """Typst math for a SymPy expression or equation, without the ``$`` signs."""
+    """Typst math for a SymPy expression, equation or matrix, without the ``$``
+    signs. A tuple or list of equations is a system, one equation per line."""
+    if isinstance(expr, tuple | list):
+        return _Printer().system([sp.sympify(e) for e in expr])
     return _Printer()(expr)

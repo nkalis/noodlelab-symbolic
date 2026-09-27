@@ -270,15 +270,18 @@ def parse_equation(
     return sp.Eq(lhs, rhs, evaluate=False)
 
 
-def split_assignments(text: str) -> list[tuple[str, str]]:
+def split_assignments(text: str, bare: bool = False) -> list[tuple[str, str]]:
     """``"E = 200 GPa; L = 6 m"`` (or one per line) as ``[("E", "200 GPa"), ...]``.
-    Blank lines and ``#`` comments are skipped."""
+    Blank lines and ``#`` comments are skipped. ``bare``: a line that is just
+    a name stands for ``name = name`` (a constant, in Values)."""
     pairs = []
     for raw in re.split(r"[;\n]", text or ""):
         line = raw.split("#", 1)[0].strip()
         if not line:
             continue
         name, sep, value = line.partition("=")
+        if bare and not sep and line.isidentifier():
+            sep, value = "=", line
         name = _RENAMED.get(name.strip(), name.strip())
         if not sep or not value.strip():
             raise ParseError(f"'{line}' is not 'name = value'")
