@@ -85,6 +85,7 @@ FUNCTIONS: dict[str, Any] = {
             "Piecewise",
         ]
     },
+    "arg": sp.arg,  # the phase of a complex number
     "ln": sp.log,
     "abs": sp.Abs,
     "min": sp.Min,
