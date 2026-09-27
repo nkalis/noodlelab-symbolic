@@ -597,8 +597,28 @@ def _elementwise(fn: Any) -> Any:
     return call
 
 
-# functions NumPy lacks: lambdify would call math's, which take one number only
-_ELEMENTWISE = {"erf": _elementwise(math.erf), "erfc": _elementwise(math.erfc)}
+def _part(fn: Any, unit: str | None = None) -> Any:
+    """A NumPy function of complex numbers (real, imag, angle) that also takes
+    quantities, which Pint does not implement it for. The parts keep the
+    unit; a phase is in radians whatever the unit was."""
+
+    def call(x: Any) -> Any:
+        if not is_quantity(x):
+            return fn(x)
+        return ureg().Quantity(fn(x.magnitude), unit if unit is not None else x.units)
+
+    return call
+
+
+# functions NumPy lacks: lambdify would call math's, which take one number only;
+# and the complex parts (re, im, arg print as real, imag, angle), which Pint lacks
+_ELEMENTWISE = {
+    "erf": _elementwise(math.erf),
+    "erfc": _elementwise(math.erfc),
+    "real": _part(np.real),
+    "imag": _part(np.imag),
+    "angle": _part(np.angle, "rad"),
+}
 
 
 def _in_unit(result: Any, unit: str) -> Any:
@@ -674,7 +694,9 @@ def evaluate_range(
     """Evaluate an expression at evenly spaced values of one variable, such as
     the deflection along a beam. ``peak`` is the value largest in size (with
     its sign) and ``peak_at`` where it occurs. Array quantities plot through
-    Magnitude (Array)."""
+    Magnitude (Array). Complex values, which have no order, are ranked by
+    their size |y|: ``minimum`` and ``maximum`` are then the smallest and the
+    largest in size."""
     lo, hi = (_call(parse_expression(t), values) for t in (start, stop))
     reg = ureg()
     # a bare number (usually 0) takes the unit of the other end, or variable_unit
@@ -688,15 +710,17 @@ def evaluate_range(
     if not is_quantity(y) or np.ndim(y.magnitude) == 0:  # does not depend on the variable
         y = y * np.ones(points)
     y = _in_unit(y, unit)
-    mag = np.asarray(y.magnitude, dtype=np.float64)
-    i = int(np.nanargmax(np.abs(mag)))
+    mag = np.asarray(y.magnitude)
+    # complex values have no order: rank them by size, as the peak already is
+    size = np.abs(mag) if np.iscomplexobj(mag) else mag.astype(np.float64)
+    i = int(np.nanargmax(np.abs(size)))
     return Sweep(
         x=x,
         value=y,
         peak=y[i],
         peak_at=x[i],
-        minimum=y[int(np.nanargmin(mag))],
-        maximum=y[int(np.nanargmax(mag))],
+        minimum=y[int(np.nanargmin(size))],
+        maximum=y[int(np.nanargmax(size))],
     )
 
 
@@ -964,7 +988,7 @@ class Iteration(NamedTuple):
     iterations: int
     converged: bool
     step: NDArray[np.float64]
-    history: NDArray[np.float64]
+    history: NDArray[Any]  # complex from a complex start
     change: NDArray[np.float64]
 
 
@@ -984,11 +1008,14 @@ def _step_expression(expression: sp.Basic, variable: str, method: str) -> sp.Bas
     return expression
 
 
-def _plain(value: Any) -> float:
-    """A number without its unit (dimensionless ratios are reduced first)."""
+def _plain(value: Any) -> float | complex:
+    """A number without its unit (dimensionless ratios are reduced first). A
+    complex number stays complex unless its imaginary part is only rounding:
+    float() would drop it without a word."""
     if is_quantity(value):
         value = value.to_reduced_units().magnitude
-    return float(np.real_if_close(value))
+    value = np.real_if_close(value)
+    return complex(value) if np.iscomplexobj(value) else float(value)
 
 
 @node(category="Symbolic", title="Iterate")
@@ -1024,13 +1051,15 @@ def iterate(
     to about that many significant digits, or after ``max_iterations`` passes
     (``converged`` is then false). ``history`` is x
     after each pass and ``change`` its relative change, for a convergence plot.
+    A complex start (1 + j) finds a complex root, and ``history`` is then complex.
     """
     tolerance = 10.0**-digits
     vals = dict(values or {})
     step_expr = _step_expression(expression, variable, method)
     x = _call(parse_expression(start), vals)
-    x = x if is_quantity(x) else float(x)  # floats, not exact integers that grow without bound
-    history: list[float] = []
+    # floats, not exact integers that grow without bound; a complex start stays complex
+    x = x if is_quantity(x) else _plain(x)
+    history: list[float | complex] = []
     changes: list[float] = []
     converged = False
     with np.errstate(all="ignore"):
@@ -1062,7 +1091,7 @@ def iterate(
         iterations=n,
         converged=converged,
         step=np.arange(1, n + 1, dtype=np.float64),
-        history=np.asarray(history, dtype=np.float64),
+        history=np.asarray(history),  # float64, or complex128 once x went complex
         change=np.asarray(changes, dtype=np.float64),
     )
 
