@@ -15,9 +15,9 @@ import sympy as sp
 from numpy.typing import NDArray
 
 from noodlelab import Param, Quantity, RunContext, node, warning
-from noodlelab.core import constants, uncertainty
-from noodlelab.core.units import dims_or_none, is_quantity, parse, ureg
-from noodlelab.reports.math import TypstMath
+from noodlelab.plugin import constants, uncertainty
+from noodlelab.plugin.math import TypstMath
+from noodlelab.plugin.units import dims_or_none, is_quantity, parse, ureg
 
 from .parse import _RENAMED, ParseError, parse_equation, parse_expression, split_assignments
 from .types import (

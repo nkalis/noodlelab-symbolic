@@ -30,7 +30,7 @@ from typing import Any
 import sympy as sp
 from sympy.parsing.sympy_parser import convert_xor, parse_expr, standard_transformations
 
-from .._expr import pow_problem
+from noodlelab.plugin.expr import pow_problem
 
 MAX_LENGTH = 4000
 
@@ -190,7 +190,7 @@ def _check_size(code: str) -> None:
     SymPy evaluates ``9^9^9`` exactly, which would hold the server for hours
     (and the probe, on every keystroke). The vetted token stream is plain
     Python arithmetic once ``^`` is ``**``, so its tree can be sized by
-    :func:`noodlelab.nodes._expr.pow_problem` before SymPy sees it. Text that
+    :func:`noodlelab.core.expr.pow_problem` before SymPy sees it. Text that
     Python cannot parse but SymPy can is left for SymPy, as before. Values
     linked in later (Substitute's ``.subs``) are not seen here and can still
     build a large power; the editor's probe timeout covers that.

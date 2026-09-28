@@ -18,7 +18,7 @@ any result in a report.
 
 from __future__ import annotations
 
-from noodlelab.tiers import require
+from noodlelab.plugin import require
 
 require("maths", "numpy", "pint", "sympy")
 

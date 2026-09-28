@@ -25,8 +25,8 @@ from noodlelab import (
     register_sampler,
     register_type,
 )
-from noodlelab.core.units import is_quantity, magnitude, ureg
-from noodlelab.reports.math import math_preview
+from noodlelab.plugin.math import math_preview
+from noodlelab.plugin.units import is_quantity, magnitude, ureg
 
 from .typst import typst_math
 
