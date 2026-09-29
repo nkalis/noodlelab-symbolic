@@ -2,5 +2,5 @@ name = "symbolic"
 title = "Symbolic maths"
 description = "Equations with SymPy: solving, simplifying, differentiating and integrating, with units"
 api = 1
-homepage = "https://github.com/nkalis/noodlelab"
+homepage = "https://github.com/nkalis/noodlelab-symbolic"
 license = "MIT"
